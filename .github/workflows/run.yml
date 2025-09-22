@@ -24,36 +24,51 @@ jobs:
     - name: Crawl arXiv papers
       id: crawl_step
       run: |
-        source .venv/bin/activate
+        set -euo pipefail
+        source "$GITHUB_WORKSPACE/.venv/bin/activate"
         today=$(date -u "+%Y-%m-%d")
         echo "开始爬取 $today 的arXiv论文... / Starting to crawl $today arXiv papers..."
-        
-        # 检查今日文件是否已存在，如存在则删除 / Check if today's file exists, delete if found
+
+        # 检查并清理今日文件
+        mkdir -p data
         if [ -f "data/${today}.jsonl" ]; then
-            echo "🗑️ 发现今日文件已存在，正在删除重新生成... / Found existing today's file, deleting for fresh start..."
+            echo "🗑️ 发现今日文件已存在，正在删除重新生成..."
             rm "data/${today}.jsonl"
-            echo "✅ 已删除现有文件：data/${today}.jsonl / Deleted existing file: data/${today}.jsonl"
         else
-            echo "📝 今日文件不存在，准备新建... / Today's file doesn't exist, ready to create new one..."
+            echo "📝 今日文件不存在，准备新建..."
         fi
-        
-        cd daily_arxiv
+
+        # 校验必须的环境变量
         export OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
         export OPENAI_BASE_URL=${{ secrets.OPENAI_BASE_URL }}
         export LANGUAGE="${{ vars.LANGUAGE }}"
         export CATEGORIES="${{ vars.CATEGORIES }}"
         export MODEL_NAME="${{ vars.MODEL_NAME }}"
-        
-        # 使用Scrapy爬取
-        # Use Scrapy to crawl
+
+        if [ -z "${CATEGORIES:-}" ]; then
+          echo "::error title=CATEGORIES未设置::请在仓库 Variables 中设置 CATEGORIES（如 cs.CL,cs.CV,stat.ML）"
+          exit 1
+        fi
+
+        echo "LANGUAGE=${LANGUAGE}"
+        echo "CATEGORIES=${CATEGORIES}"
+        echo "MODEL_NAME=${MODEL_NAME}"
+
+        cd daily_arxiv
+
+        # 运行 Scrapy
         scrapy crawl arxiv -o ../data/${today}.jsonl
-        
-        # 检查爬取是否成功 / Check if crawling was successful
+
+        # 产出校验：文件存在且非空（至少一行）
         if [ ! -f "../data/${today}.jsonl" ]; then
-            echo "爬取失败，未生成数据文件 / Crawling failed, no data file generated"
+            echo "爬取失败：未生成数据文件"
             exit 1
         fi
-        
+        if [ ! -s "../data/${today}.jsonl" ] || [ "$(wc -l < ../data/${today}.jsonl)" -eq 0 ]; then
+            echo "::error title=抓取结果为空::请检查 CATEGORIES 值或爬虫逻辑。当前 CATEGORIES='${CATEGORIES}'"
+            exit 1
+        fi
+
         echo "crawl_date=$today" >> $GITHUB_OUTPUT
         echo "爬取完成 / Crawling completed"
         
